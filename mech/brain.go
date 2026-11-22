@@ -1,4 +1,4 @@
-﻿package mech
+package mech
 
 import (
 	"fmt"
@@ -853,6 +853,12 @@ func (b *Brain) step(o *Obs, act *Action) {
 			}
 			var bc *Vec3
 			for _, c := range b.cubes {
+				if math.Abs(c.Pos[2]-me.Pos[2]) > 4 || b.zonePenalty(&o.Zone, c.Pos[0], c.Pos[1]) > 8 {
+					continue
+				}
+				if finishing && hyp(c.Pos[0]-x, c.Pos[1]-y) > 12 {
+					continue
+				}
 				if d := hyp(c.Pos[0]-x, c.Pos[1]-y); d < r {
 					r = d
 					cp := c.Pos
@@ -1424,6 +1430,9 @@ func (b *Brain) prefRange(me *Self, t *Track) float64 {
 	if t.Kind == "npc" {
 		return 58
 	}
+	if holds(t.Weapons, "lightning") {
+		r = math.Max(r, b.Cfg.Weapons["lightning"].Range+12)
+	}
 	if light == nil {
 		if holds(t.Weapons, "lightning") {
 			r = math.Max(r, 64)
@@ -1497,10 +1506,16 @@ func (b *Brain) fightMove(o *Obs, tg *Track, seen []*Track, wantLos float64) (fl
 		}
 		body := Vec3{cx, cy, cz + me.Stats.Height*0.6}
 		for _, e := range seen {
-			if e == tg || hyp(e.Pos[0]-cx, e.Pos[1]-cy) > 170 {
+			distance := hyp(e.Pos[0]-cx, e.Pos[1]-cy)
+			if distance > 170 {
 				continue
 			}
-			if b.W.Clear(b.eye(e), body) {
+			// A short step across this boundary can cost the laser charge and the duel.
+			if holds(e.Weapons, "lightning") {
+				lightningRange := b.Cfg.Weapons["lightning"].Range
+				s -= 3.5 * math.Max(0, lightningRange+10-distance)
+			}
+			if e != tg && b.W.Clear(b.eye(e), body) {
 				s -= 30
 			}
 		}
