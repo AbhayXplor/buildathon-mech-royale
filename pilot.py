@@ -5,7 +5,7 @@ import mechfight as mf
 
 
 class Pilot:
-    name = "Perimeter"
+    name = "Perimeter Duel"
 
     def __init__(self, hello):
         self.reach = hello["config"]["loot"]["pickup_radius"]
@@ -13,6 +13,8 @@ class Pilot:
         self.cover = []
         self.roofs = {}
         self.last_hit = {}
+        self.attacker = None
+        self.focus = None
         roots = [Path(hello["map"]["dir"]), Path("/arena")]
         for root in roots:
             path = root / "v2" / "world.json"
@@ -78,6 +80,7 @@ class Pilot:
             if event["type"] == "hit":
                 self.last_hit[event["target"]] = o["t"]
             if event["type"] == "damaged" and event.get("bearing") is not None:
+                self.attacker = event.get("by")
                 self.last_damage = o["t"]
                 self.damage_bearing = event["bearing"]
         hp_fraction = me["hp"] / me["max_hp"]
@@ -108,7 +111,15 @@ class Pilot:
         enemies = [m for m in o["mechs"] if m["kind"]=="mech"]
         muzzle_z = z+me["stats"].get("muzzle_height",7)
         visible = [m for m in enemies if self.clear(x,y,muzzle_z,m)]
-        target = min(visible or enemies, key=lambda m: dist(m["pos"])+0.32*m.get("hp",600)+250*(dist(m["pos"])>220), default=None)
+        gun_range = max((w["stats"].get("range",0) for w in slots if w and w["kind"] in ("gun","laser")),default=200)
+        def duel_cost(enemy):
+            distance = dist(enemy["pos"])
+            health = enemy.get("hp",900)
+            wounded = health < 0.32 * enemy.get("max_hp",1400)
+            recent_attacker = enemy["id"] == self.attacker and o["t"] - self.last_damage < 2
+            return distance + 0.18*health + 3*max(0,distance-gun_range) - 150*wounded - 65*recent_attacker - 55*(enemy["id"] == self.focus)
+        target = min(visible or enemies,key=duel_cost,default=None)
+        self.focus = target["id"] if target else None
         center = zone["next_center"]
         angle = heading(center)
         side = 1 if int(o["t"]/3.7+me["id"])%2 else -1
@@ -124,15 +135,17 @@ class Pilot:
             stop = dist(best_prize[1]) < 3
         elif target and not urgent:
             distance = dist(target["pos"])
-            desired = 172 if "laser" not in held else 205
-            if self.retreating or final_mode:
+            desired = 138 if "laser" not in held else 165
+            if finish and not final_mode and hp_fraction > 0.35:
+                desired = 95
+            if (self.retreating and not finish) or final_mode:
                 desired += 70
             angle = heading(target["pos"]) + side * (math.pi/2 + math.atan((desired-distance)/30))
         elif not urgent and self.retreating and recent_damage:
             angle = self.damage_bearing + math.pi
         elif not urgent:
             angle += 1.36 if dist(center) < zone["next_radius"]*0.72 else 0.65
-        if self.cover and (final_mode or self.retreating) and not urgent and best_prize[0] >= 18 and (self.retreating or threat_nearby):
+        if self.cover and (final_mode or (self.retreating and not finish)) and not urgent and best_prize[0] >= 18 and (self.retreating or threat_nearby):
             if o["t"] >= self.replan:
                 self.replan = o["t"] + 1.6
                 threat = target["pos"] if target else center
@@ -148,7 +161,7 @@ class Pilot:
         if target and not urgent and not recent_damage and best_prize[0] > 18:
             distance = dist(target["pos"])
             proven_angle = o["t"]-self.last_hit.get(target["id"],-100) < 1.6
-            if visible and proven_angle and 105 < distance < 218 and len(visible) == 1 and not o["projectiles"]:
+            if final_mode and visible and proven_angle and 105 < distance < 218 and len(visible) == 1 and not o["projectiles"]:
                 stop = True
             elif not visible and distance < 210:
                 lateral = heading(target["pos"])+math.pi/2
@@ -185,6 +198,18 @@ class Pilot:
                         risk += max(0,8-clearance)**2/(0.2+t)
                     return risk+3*abs(offset)
                 angle += min((0,-0.5,0.5,-1,1,-1.57,1.57,2.5,-2.5),key=travel_cost)
+        if self.roofs and not stop:
+            # Try nearby headings when the preferred direction leads into a wall.
+            def move_cost(offset):
+                direction = angle + offset
+                dx,dy = math.cos(direction),math.sin(direction)
+                cost = abs(offset)*8
+                for ahead in (4,8,13):
+                    cell = (math.floor((x+dx*ahead)/5),math.floor((y+dy*ahead)/5))
+                    if self.roofs.get(cell,-1000)>z+2:
+                        cost += 18
+                return cost
+            angle += min((0,0.45,-0.45,0.9,-0.9,1.45,-1.45,2.3,-2.3),key=move_cost)
         action.update(move=[0,0] if stop else [math.cos(angle),math.sin(angle)], boost=not stop and me["energy"]>18 and (urgent or recent_damage or self.stalled>3 or (target is not None and dist(target["pos"])<100)), jump=not stop and me["grounded"] and self.stalled>3)
         if not target and not self.retreating and o["crates"]:
             target = min(o["crates"],key=lambda c:dist(c["pos"]))
@@ -217,6 +242,12 @@ class Pilot:
             fire = [bool(w and aligned and d<w["stats"].get("range",180) and (not loft or w["kind"] == "mortar")) for w in slots]
             if self.retreating and not imminent and not recent_damage and final_mode:
                 fire = [False, False]
+            for i,weapon in enumerate(slots):
+                if weapon and weapon["kind"] == "laser":
+                    charge = weapon.get("charge",0)
+                    ready = weapon["stats"].get("charge",0.75)
+                    if charge >= ready-0.01 and aligned and abs(me["aim"][1]-pitch) < 0.09:
+                        fire[i] = False
             action.update(aim=[yaw,pitch],fire=fire)
         else:
             action["aim"] = [self.damage_bearing if recent_damage else angle+0.8*math.sin(o["t"]),0]
