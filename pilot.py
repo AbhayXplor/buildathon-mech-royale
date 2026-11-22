@@ -129,8 +129,9 @@ class Pilot:
         recent_damage = o["t"] - self.last_damage < 4
         final_mode = self.solo_deaths >= 2
         threat_nearby = target and dist(target["pos"]) < 130
+        finish = bool(target and visible and target.get("hp",900) < 360 and dist(target["pos"]) < gun_range)
         stop = False
-        if not urgent and best_prize[0] < (18 if threat_nearby else 60):
+        if not finish and not urgent and best_prize[0] < (18 if threat_nearby else 60):
             angle = heading(best_prize[1])
             stop = dist(best_prize[1]) < 3
         elif target and not urgent:
