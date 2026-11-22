@@ -11,6 +11,8 @@ class Pilot:
         self.reach = hello["config"]["loot"]["pickup_radius"]
         self.previous = None
         self.cover = []
+        self.roofs = {}
+        self.last_hit = {}
         roots = [Path(hello["map"]["dir"]), Path("/arena")]
         for root in roots:
             path = root / "v2" / "world.json"
@@ -22,6 +24,22 @@ class Pilot:
                 ring = prism["ring"]
                 xs, ys = ring[::2], ring[1::2]
                 cx, cy = (min(xs)+max(xs))/2, (min(ys)+max(ys))/2
+                # Rasterize the footprint at cell centers, preserving courtyards.
+                rings = [ring] + prism.get("holes", [])
+                for row in range(math.floor(min(ys)/5),math.floor(max(ys)/5)+1):
+                    scan = 5*row+2.5
+                    cuts = []
+                    for boundary in rings:
+                        for i in range(0,len(boundary),2):
+                            ax,ay = boundary[i-2:i] if i else boundary[-2:]
+                            bx,by = boundary[i:i+2]
+                            if (ay>scan) != (by>scan):
+                                cuts.append(ax+(scan-ay)*(bx-ax)/(by-ay))
+                    cuts.sort()
+                    for left,right in zip(cuts[::2],cuts[1::2]):
+                        for col in range(math.ceil(left/5-0.5),math.ceil(right/5-0.5)):
+                            cell = (col,row)
+                            self.roofs[cell] = max(self.roofs.get(cell,-1000),prism["top"])
                 self.cover.extend([(min(xs)-5,cy,cx,cy),(max(xs)+5,cy,cx,cy),(cx,min(ys)-5,cx,cy),(cx,max(ys)+5,cx,cy)])
             break
         self.refuge = None
@@ -32,6 +50,16 @@ class Pilot:
         self.stalled = 0
         self.last_alive = 16
         self.solo_deaths = 0
+
+    def clear(self, x, y, z, target):
+        tx,ty,tz = target["pos"]
+        steps = max(1,math.ceil(math.hypot(tx-x,ty-y)/5))
+        for i in range(1,steps):
+            f = i/steps
+            cell = (math.floor((x+(tx-x)*f)/5),math.floor((y+(ty-y)*f)/5))
+            if self.roofs.get(cell,-1000) > z+(tz+4.5-z)*f:
+                return False
+        return True
 
     def act(self, o):
         me, zone = o["self"], o["zone"]
@@ -47,6 +75,8 @@ class Pilot:
         self.solo_deaths += max(0, self.last_alive-o["alive"]-sum(e["type"]=="kill" for e in o["events"]))
         self.last_alive = o["alive"]
         for event in o["events"]:
+            if event["type"] == "hit":
+                self.last_hit[event["target"]] = o["t"]
             if event["type"] == "damaged" and event.get("bearing") is not None:
                 self.last_damage = o["t"]
                 self.damage_bearing = event["bearing"]
@@ -76,7 +106,9 @@ class Pilot:
             if drop["lands_in"] <= 6:
                 prizes.append((max(0, dist(drop["pos"]) - (40 if self.retreating else 15)), drop["pos"]))
         enemies = [m for m in o["mechs"] if m["kind"]=="mech"]
-        target = min(enemies, key=lambda m: dist(m["pos"])+0.32*m.get("hp",600)+250*(dist(m["pos"])>220), default=None)
+        muzzle_z = z+me["stats"].get("muzzle_height",7)
+        visible = [m for m in enemies if self.clear(x,y,muzzle_z,m)]
+        target = min(visible or enemies, key=lambda m: dist(m["pos"])+0.32*m.get("hp",600)+250*(dist(m["pos"])>220), default=None)
         center = zone["next_center"]
         angle = heading(center)
         side = 1 if int(o["t"]/3.7+me["id"])%2 else -1
@@ -113,6 +145,19 @@ class Pilot:
             if self.refuge:
                 angle = heading(self.refuge)
                 stop = dist(self.refuge) < 4 and not recent_damage
+        if target and not urgent and not recent_damage and best_prize[0] > 18:
+            distance = dist(target["pos"])
+            proven_angle = o["t"]-self.last_hit.get(target["id"],-100) < 1.6
+            if visible and proven_angle and 105 < distance < 218 and len(visible) == 1 and not o["projectiles"]:
+                stop = True
+            elif not visible and distance < 210:
+                lateral = heading(target["pos"])+math.pi/2
+                for direction in (side,-side):
+                    peek = lateral if direction > 0 else lateral+math.pi
+                    if self.clear(x+13*math.cos(peek),y+13*math.sin(peek),muzzle_z,target):
+                        angle = peek
+                        stop = False
+                        break
         if self.stalled > 3 and not stop:
             angle += side*1.1
         if o["projectiles"] and not stop:
