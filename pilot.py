@@ -115,6 +115,31 @@ class Pilot:
                 stop = dist(self.refuge) < 4 and not recent_damage
         if self.stalled > 3 and not stop:
             angle += side*1.1
+        if o["projectiles"] and not stop:
+            incoming = []
+            for shot in o["projectiles"]:
+                px, py, pz = shot["pos"]
+                vx, vy, vz = shot["vel"]
+                dx, dy = px-x, py-y
+                speed2 = vx*vx + vy*vy
+                if speed2 < 1:
+                    continue
+                eta = -(dx*vx+dy*vy)/speed2
+                if 0.03 < eta < 0.85 and abs(pz+vz*eta-z-5) < 16:
+                    incoming.append((dx,dy,vx,vy,eta))
+            if incoming:
+                speed = me["stats"].get("boost_speed",19) if me["energy"] > 20 else me["stats"].get("walk_speed",12)
+                def travel_cost(offset):
+                    ux = speed*math.cos(angle+offset)
+                    uy = speed*math.sin(angle+offset)
+                    risk = 0
+                    for dx,dy,vx,vy,eta in incoming:
+                        rx,ry = vx-ux,vy-uy
+                        t = max(0,min(0.9,-(dx*rx+dy*ry)/max(1,rx*rx+ry*ry)))
+                        clearance = math.hypot(dx+rx*t,dy+ry*t)
+                        risk += max(0,8-clearance)**2/(0.2+t)
+                    return risk+3*abs(offset)
+                angle += min((0,-0.5,0.5,-1,1,-1.57,1.57,2.5,-2.5),key=travel_cost)
         action.update(move=[0,0] if stop else [math.cos(angle),math.sin(angle)], boost=not stop and me["energy"]>18 and (urgent or recent_damage or self.stalled>3 or (target is not None and dist(target["pos"])<100)), jump=not stop and me["grounded"] and self.stalled>3)
         if not target and not self.retreating and o["crates"]:
             target = min(o["crates"],key=lambda c:dist(c["pos"]))
