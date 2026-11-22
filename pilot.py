@@ -66,20 +66,32 @@ class Pilot:
             v = target.get("vel",(0,0,0))
             d = dist(p)
             instant = any(w and w["kind"]=="laser" and w["cooldown"]<0.15 for w in slots)
-            t = 0 if instant else d/252
+            gun = next((w for w in slots if w and w["kind"] == "gun"), None)
+            mortar = next((w for w in slots if w and w["kind"] == "mortar" and w["cooldown"] <= 0.1), None)
+            loft = mortar is not None and 18 < d < 145 and not instant
+            speed = mortar["stats"].get("speed",72) if loft else (gun["stats"].get("speed",252) if gun else 252)
+            t = 0 if instant else d/speed
             dx,dy = p[0]+v[0]*t-x,p[1]+v[1]*t-y
             yaw = math.atan2(dy,dx)
             pitch = math.atan2(p[2]+(4.5 if "vel" in target else 1)-z-7, max(1,math.hypot(dx,dy)))
+            if loft:
+                horizontal = math.hypot(dx,dy)
+                height = p[2]-z-7
+                gravity = mortar["stats"].get("gravity",22)
+                disc = speed**4-gravity*(gravity*horizontal**2+2*height*speed**2)
+                if disc > 0:
+                    pitch = math.atan2(gravity*horizontal**2+2*height*speed**2,horizontal*(speed**2+math.sqrt(disc)))
             aligned = abs(math.remainder(yaw-me["aim"][0],2*math.pi)) < 0.06+3/max(1,d)
             action.update(aim=[yaw,pitch],fire=[bool(w and aligned and d<w["stats"].get("range",180)) for w in slots])
         else:
             action["aim"] = [angle+0.8*math.sin(o["t"]),0]
             action["reload"] = any(w and w.get("ammo",12)<8 for w in slots)
         if o["offer"]:
-            priority = ["plating","regen","damage","speed","reload"]
+            priority = ["nanites","armor","plating","gun_damage","gun_rate","servos","laser_damage","gun_mag"]
             choices = o["offer"]["choices"]
             action["pick"] = min(range(len(choices)),key=lambda i:next((j for j,s in enumerate(priority) if s in choices[i]["id"]),10))
         return action
 
 
 mf.run(Pilot)
+
