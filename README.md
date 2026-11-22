@@ -1,0 +1,1 @@
+Perimeter is an original Mech Royale controller. mechfight.py is the official Builders Python starter protocol wrapper. The policy uses shrinking-zone travel time, weapon-aware pickup selection, strafing and opponent elimination signals.
