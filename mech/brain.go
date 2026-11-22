@@ -761,6 +761,18 @@ func (b *Brain) step(o *Obs, act *Action) {
 	zoneMust := !me.InZone || now+tNeed+3 >= deadline
 	zoneShould := now+tNeed+14 >= deadline
 
+	// A recent duel target can dip out of sight without ending the fight.
+	// Spend at most three seconds regaining the angle, while the route is safe.
+	var chase *Track
+	if b.pracOn && !b.retreat && !zoneShould && target == nil && crowd <= 1 && hpFrac >= 0.58 && now-b.stickAt <= 3 {
+		if last := b.tracks[b.stickID]; last != nil && now-last.Seen <= 2.5 &&
+			last.HP > 0 && last.HP < 0.45*last.MaxHP &&
+			hyp(last.Pos[0]-x, last.Pos[1]-y) < 68 &&
+			b.zonePenalty(&o.Zone, last.Pos[0], last.Pos[1]) <= 2 {
+			chase = last
+		}
+	}
+
 	escJump := false
 	switch {
 	case b.escape(me, &mx, &my, &boost, &escJump):
@@ -807,6 +819,10 @@ func (b *Brain) step(o *Obs, act *Action) {
 		b.coverMove(o, seen, &mx, &my):
 		boost = me.Energy > 30 && (mx != 0 || my != 0)
 		mode = "evade"
+	case chase != nil:
+		mx, my = b.travel(me, chase.Pos[0], chase.Pos[1])
+		boost = me.Energy > 50 && hyp(chase.Pos[0]-x, chase.Pos[1]-y) > 28
+		mode = "finish:chase"
 	case foe != nil:
 
 		ready := gun != nil && gun.Ammo > 0 && gun.Reload <= 0.25 && foe.Dist <= gun.Stats.Range-10
