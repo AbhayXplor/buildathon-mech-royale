@@ -76,7 +76,7 @@ class Pilot:
             if drop["lands_in"] <= 6:
                 prizes.append((max(0, dist(drop["pos"]) - (40 if self.retreating else 15)), drop["pos"]))
         enemies = [m for m in o["mechs"] if m["kind"]=="mech"]
-        target = min(enemies, key=lambda m: dist(m["pos"])+0.12*m.get("hp",600), default=None)
+        target = min(enemies, key=lambda m: dist(m["pos"])+0.32*m.get("hp",600)+250*(dist(m["pos"])>220), default=None)
         center = zone["next_center"]
         angle = heading(center)
         side = 1 if int(o["t"]/3.7+me["id"])%2 else -1
@@ -100,7 +100,7 @@ class Pilot:
             angle = self.damage_bearing + math.pi
         elif not urgent:
             angle += 1.36 if dist(center) < zone["next_radius"]*0.72 else 0.65
-        if self.cover and final_mode and not urgent and best_prize[0] >= 18 and (self.retreating or threat_nearby):
+        if self.cover and (final_mode or self.retreating) and not urgent and best_prize[0] >= 18 and (self.retreating or threat_nearby):
             if o["t"] >= self.replan:
                 self.replan = o["t"] + 1.6
                 threat = target["pos"] if target else center
@@ -170,7 +170,7 @@ class Pilot:
             aligned = abs(math.remainder(yaw-me["aim"][0],2*math.pi)) < 0.06+3/max(1,d)
             imminent = target.get("hp",1000) < 180 or d < 85
             fire = [bool(w and aligned and d<w["stats"].get("range",180) and (not loft or w["kind"] == "mortar")) for w in slots]
-            if self.retreating and not imminent:
+            if self.retreating and not imminent and not recent_damage and final_mode:
                 fire = [False, False]
             action.update(aim=[yaw,pitch],fire=fire)
         else:
